@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/armon/go-metrics"
@@ -115,6 +116,16 @@ func (s *followerReplication) setLastContact() {
 	s.lastContactLock.Unlock()
 }
 
+// NextIndex returns the next index
+func (s *followerReplication) NextIndex() uint64 {
+	return atomic.LoadUint64(&s.nextIndex)
+}
+
+// setNextIndex sets the next index
+func (s *followerReplication) setNextIndex(val uint64) {
+	atomic.StoreUint64(&s.nextIndex, val)
+}
+
 // replicate is a long running routine that replicates log entries to a single
 // follower.
 func (r *Raft) replicate(s *followerReplication) {
@@ -214,7 +225,7 @@ START:
 		s.failures = 0
 		s.allowPipeline = true
 	} else {
-		s.nextIndex = max(min(s.nextIndex-1, resp.LastLog+1), 1)
+		s.setNextIndex(max(min(s.nextIndex-1, resp.LastLog+1), 1))
 		if resp.NoRetryBackoff {
 			s.failures = 0
 		} else {
@@ -316,7 +327,7 @@ func (r *Raft) sendLatestSnapshot(s *followerReplication) (bool, error) {
 	// Check for success
 	if resp.Success {
 		// Update the indexes
-		s.nextIndex = meta.Index + 1
+		s.setNextIndex(meta.Index + 1)
 		s.commitment.match(s.peer.ID, meta.Index)
 
 		// Clear any failures
@@ -586,7 +597,7 @@ func updateLastAppended(s *followerReplication, req *AppendEntriesRequest) {
 	// Mark any inflight logs as committed
 	if logs := req.Entries; len(logs) > 0 {
 		last := logs[len(logs)-1]
-		s.nextIndex = last.Index + 1
+		s.setNextIndex(last.Index + 1)
 		s.commitment.match(s.peer.ID, last.Index)
 	}
 

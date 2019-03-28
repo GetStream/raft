@@ -447,17 +447,17 @@ func NewRaft(conf *Config, fsm FSM, logs LogStore, stable StableStore, snaps Sna
 
 	// Create Raft struct.
 	r := &Raft{
-		protocolVersion: protocolVersion,
-		applyCh:         make(chan *logFuture),
-		conf:            *conf,
-		fsm:             fsm,
-		fsmMutateCh:     make(chan interface{}, 128),
-		fsmSnapshotCh:   make(chan *reqSnapshotFuture),
-		leaderCh:        make(chan bool),
-		localID:         localID,
-		localAddr:       localAddr,
-		logger:          logger,
-		logs:            logs,
+		protocolVersion:       protocolVersion,
+		applyCh:               make(chan *logFuture),
+		conf:                  *conf,
+		fsm:                   fsm,
+		fsmMutateCh:           make(chan interface{}, 128),
+		fsmSnapshotCh:         make(chan *reqSnapshotFuture),
+		leaderCh:              make(chan bool),
+		localID:               localID,
+		localAddr:             localAddr,
+		logger:                logger,
+		logs:                  logs,
 		configurationChangeCh: make(chan *configurationChangeFuture),
 		configurations:        configurations{},
 		rpcCh:                 trans.Consumer(),
@@ -1031,7 +1031,7 @@ func (r *Raft) ReplicationStats() (map[ServerID]ReplicationStat, error) {
 		}
 		stats[k] = ReplicationStat{
 			LastContact: time.Since(v.LastContact()),
-			NextIndex:   v.nextIndex,
+			NextIndex:   v.NextIndex(),
 		}
 	}
 
