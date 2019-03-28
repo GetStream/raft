@@ -88,8 +88,12 @@ type leaderState struct {
 // setLeader is used to modify the current leader of the cluster
 func (r *Raft) setLeader(leader ServerAddress) {
 	r.leaderLock.Lock()
+	oldLeader := r.leader
 	r.leader = leader
 	r.leaderLock.Unlock()
+	if oldLeader != leader {
+		r.observe(LeaderObservation{leader: leader})
+	}
 }
 
 // getShuttingDown is used to check if raft is in the process of shutting down
@@ -533,6 +537,7 @@ func (r *Raft) startStopReplication() {
 				currentTerm: r.getCurrentTerm(),
 				nextIndex:   lastIdx + 1,
 				lastContact: time.Now(),
+				notify:      make(map[*verifyFuture]struct{}),
 				notifyCh:    make(chan struct{}, 1),
 				stepDown:    r.leaderState.stepDown,
 			}
@@ -644,11 +649,17 @@ func (r *Raft) leaderLoop() {
 				r.logger.Printf("[WARN] raft: New leader elected, stepping down")
 				r.setState(Follower)
 				delete(r.leaderState.notify, v)
+				for _, repl := range r.leaderState.replState {
+					repl.cleanNotify(v)
+				}
 				v.respond(ErrNotLeader)
 
 			} else {
 				// Quorum of members agree, we are still leader
 				delete(r.leaderState.notify, v)
+				for _, repl := range r.leaderState.replState {
+					repl.cleanNotify(v)
+				}
 				v.respond(nil)
 			}
 
@@ -728,7 +739,7 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 	// Trigger immediate heartbeats
 	for _, repl := range r.leaderState.replState {
 		repl.notifyLock.Lock()
-		repl.notify = append(repl.notify, v)
+		repl.notify[v] = struct{}{}
 		repl.notifyLock.Unlock()
 		asyncNotifyCh(repl.notifyCh)
 	}
@@ -740,27 +751,34 @@ func (r *Raft) verifyLeader(v *verifyFuture) {
 // contact. This must only be called from the main thread.
 func (r *Raft) checkLeaderLease() time.Duration {
 	// Track contacted nodes, we can always contact ourself
-	contacted := 1
+	contacted := 0
 
 	// Check each follower
 	var maxDiff time.Duration
 	now := time.Now()
-	for peer, f := range r.leaderState.replState {
-		diff := now.Sub(f.LastContact())
-		if diff <= r.conf.LeaderLeaseTimeout {
-			contacted++
-			if diff > maxDiff {
-				maxDiff = diff
+	for _, server := range r.configurations.latest.Servers {
+		if server.Suffrage == Voter {
+			if server.ID == r.localID {
+				contacted++
+				continue
 			}
-		} else {
-			// Log at least once at high value, then debug. Otherwise it gets very verbose.
-			if diff <= 3*r.conf.LeaderLeaseTimeout {
-				r.logger.Printf("[WARN] raft: Failed to contact %v in %v", peer, diff)
+			f := r.leaderState.replState[server.ID]
+			diff := now.Sub(f.LastContact())
+			if diff <= r.conf.LeaderLeaseTimeout {
+				contacted++
+				if diff > maxDiff {
+					maxDiff = diff
+				}
 			} else {
-				r.logger.Printf("[DEBUG] raft: Failed to contact %v in %v", peer, diff)
+				// Log at least once at high value, then debug. Otherwise it gets very verbose.
+				if diff <= 3*r.conf.LeaderLeaseTimeout {
+					r.logger.Printf("[WARN] raft: Failed to contact %v in %v", server.ID, diff)
+				} else {
+					r.logger.Printf("[DEBUG] raft: Failed to contact %v in %v", server.ID, diff)
+				}
 			}
+			metrics.AddSample([]string{"raft", "leader", "lastContact"}, float32(diff/time.Millisecond))
 		}
-		metrics.AddSample([]string{"raft", "leader", "lastContact"}, float32(diff/time.Millisecond))
 	}
 
 	// Verify we can contact a quorum
