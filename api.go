@@ -810,7 +810,10 @@ func (r *Raft) Shutdown() Future {
 		if r.getState() == Leader {
 			r.logger.Println("[INFO] raft: Notifying followers that node is shutting down")
 			var group sync.WaitGroup
-			for _, replState := range r.leaderState.replState {
+			for nodeID, replState := range r.leaderState.replState {
+				if nodeID == r.localID {
+					continue
+				}
 				replStateReal := replState
 				group.Add(1)
 				go func() {
@@ -823,11 +826,38 @@ func (r *Raft) Shutdown() Future {
 		close(r.shutdownCh)
 		r.shutdown = true
 		r.setState(Shutdown)
+		r.cleanOutFutures()
 		return &shutdownFuture{r}
 	}
 
 	// avoid closing transport twice
 	return &shutdownFuture{nil}
+}
+
+func (r *Raft) cleanOutFutures() {
+	for {
+		select {
+		case v := <-r.configurationChangeCh:
+			v.respond(ErrRaftShutdown)
+
+		case v := <-r.applyCh:
+			v.respond(ErrRaftShutdown)
+
+		case v := <-r.verifyCh:
+			v.respond(ErrRaftShutdown)
+
+		case v := <-r.userRestoreCh:
+			v.respond(ErrRaftShutdown)
+
+		case v := <-r.configurationsCh:
+			v.respond(ErrRaftShutdown)
+
+		case v := <-r.bootstrapCh:
+			v.respond(ErrRaftShutdown)
+		default:
+			return
+		}
+	}
 }
 
 // Snapshot is used to manually force Raft to take a snapshot. Returns a future

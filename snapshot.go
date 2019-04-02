@@ -131,6 +131,11 @@ func (r *Raft) takeSnapshot() (string, error) {
 
 	// Wait for dispatch or shutdown.
 	select {
+	case <-r.shutdownCh:
+		return "", ErrRaftShutdown
+	default:
+	}
+	select {
 	case r.fsmSnapshotCh <- snapReq:
 	case <-r.shutdownCh:
 		return "", ErrRaftShutdown
@@ -150,6 +155,11 @@ func (r *Raft) takeSnapshot() (string, error) {
 	// it is owned by the main thread.
 	configReq := &configurationsFuture{}
 	configReq.init()
+	select {
+	case <-r.shutdownCh:
+		return "", ErrRaftShutdown
+	default:
+	}
 	select {
 	case r.configurationsCh <- configReq:
 	case <-r.shutdownCh:

@@ -1030,14 +1030,7 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 
 	case LogCommand:
 		// Forward to the fsm handler
-		select {
-		case r.fsmMutateCh <- &commitTuple{l, future}:
-		case <-r.shutdownCh:
-			if future != nil {
-				future.respond(ErrRaftShutdown)
-			}
-		}
-
+		r.processLogCommand(l, future)
 		// Return so that the future is only responded to
 		// by the FSM handler when the application is done
 		return
@@ -1055,6 +1048,27 @@ func (r *Raft) processLog(l *Log, future *logFuture) {
 	// Invoke the future if given
 	if future != nil {
 		future.respond(nil)
+	}
+}
+func (r *Raft) processLogCommand(l *Log, future *logFuture) {
+	for {
+		select {
+		case r.fsmMutateCh <- &commitTuple{l, future}:
+			return
+		case c := <-r.configurationsCh:
+			// This is needed to avoid a deadlock when an unreleased snapshot
+			// is blocking current applies. takeSnapshot blocks on
+			// configurationsCh at some point. This can cause a deadlock when:
+			// - configurations aren't handled because this main thread is waiting on an fsm apply
+			// - the fsm apply is blocked because a snapshot is waiting on configurations
+			c.configurations = r.configurations.Clone()
+			c.respond(nil)
+		case <-r.shutdownCh:
+			if future != nil {
+				future.respond(ErrRaftShutdown)
+			}
+			return
+		}
 	}
 }
 
