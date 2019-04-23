@@ -94,7 +94,8 @@ type Raft struct {
 	leaderCh chan bool
 
 	// leaderState used only while state is leader
-	leaderState leaderState
+	leaderState   leaderState
+	replStateLock sync.Mutex
 
 	// Stores our local server ID, used to avoid sending RPCs to ourself
 	localID ServerID
@@ -810,6 +811,7 @@ func (r *Raft) Shutdown() Future {
 		if r.getState() == Leader {
 			r.logger.Println("[INFO] raft: Notifying followers that node is shutting down")
 			var group sync.WaitGroup
+			r.replStateLock.Lock()
 			for nodeID, replState := range r.leaderState.replState {
 				if nodeID == r.localID {
 					continue
@@ -821,6 +823,7 @@ func (r *Raft) Shutdown() Future {
 					r.sendShutdown(replStateReal)
 				}()
 			}
+			r.replStateLock.Unlock()
 			group.Wait()
 		}
 		close(r.shutdownCh)

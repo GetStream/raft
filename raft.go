@@ -431,7 +431,9 @@ func (r *Raft) runLeader() {
 		r.configurations.latest,
 		r.getLastIndex()+1 /* first index that may be committed in this term */)
 	r.leaderState.inflight = list.New()
+	r.replStateLock.Lock()
 	r.leaderState.replState = make(map[ServerID]*followerReplication)
+	r.replStateLock.Unlock()
 	r.leaderState.notify = make(map[*verifyFuture]struct{})
 	r.leaderState.stepDown = make(chan struct{}, 1)
 
@@ -463,7 +465,9 @@ func (r *Raft) runLeader() {
 		r.leaderState.commitCh = nil
 		r.leaderState.commitment = nil
 		r.leaderState.inflight = nil
+		r.replStateLock.Lock()
 		r.leaderState.replState = nil
+		r.replStateLock.Unlock()
 		r.leaderState.notify = nil
 		r.leaderState.stepDown = nil
 
@@ -541,7 +545,9 @@ func (r *Raft) startStopReplication() {
 				notifyCh:    make(chan struct{}, 1),
 				stepDown:    r.leaderState.stepDown,
 			}
+			r.replStateLock.Lock()
 			r.leaderState.replState[server.ID] = s
+			r.replStateLock.Unlock()
 			r.goFunc(func() { r.replicate(s) })
 			asyncNotifyCh(s.triggerCh)
 		}
@@ -556,7 +562,9 @@ func (r *Raft) startStopReplication() {
 		r.logger.Printf("[INFO] raft: Removed peer %v, stopping replication after %v", serverID, lastIdx)
 		repl.stopCh <- lastIdx
 		close(repl.stopCh)
+		r.replStateLock.Lock()
 		delete(r.leaderState.replState, serverID)
+		r.replStateLock.Unlock()
 	}
 }
 
